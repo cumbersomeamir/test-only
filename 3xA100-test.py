@@ -152,8 +152,8 @@ def main():
     print(type(prompts))
     print(type(completions))
 
-    base_model = "facebook/opt-1.3b"
-    model = AutoModelForCausalLM.from_pretrained("facebook/opt-1.3b")
+    base_model = "EleutherAI/gpt-neo-1.3B"
+    model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-neo-1.3B")
 
     # Check if there are multiple GPUs
     if torch.cuda.device_count() > 1:
@@ -166,7 +166,7 @@ def main():
     for param in model.parameters():
         param.requires_grad = True
 
-    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-1.3b")
+    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-1.3B")
     tokenizer.pad_token = tokenizer.eos_token
 
     states, actions, rewards = create_dataset(model, tokenizer, prompts, completions,PPO.device)
