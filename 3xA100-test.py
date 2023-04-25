@@ -11,6 +11,7 @@ import pandas as pd
 
 class PPO:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def __init__(
         self,
         model,
@@ -49,15 +50,13 @@ class PPO:
                 # Calculate the custom loss function
                 custom_loss = policy_loss + value_loss
 
-                # Enable gradient computation and calculate gradients
-                with torch.enable_grad():
-                    custom_loss.backward()
+                # Update the model parameters without the optimizer
 
-                # Update the model parameters with the optimizer
-                self.optimizer.step()
-
-                # Manually zero gradients
-                self.optimizer.zero_grad()
+                for param in self.model.parameters():
+                    if param.grad is not None:
+                        param -= self.learning_rate * param.grad
+                        # Manually zero gradients
+                        param.grad.zero_()
 
     def act(self, state):
         with torch.no_grad():
@@ -79,16 +78,15 @@ class PPO:
             attention_mask = torch.ones_like(input_ids["input_ids"]).to(self.device)
             outputs = self.model(input_ids=input_ids["input_ids"], attention_mask=attention_mask)
             logits = outputs.logits[:, -1, :]
-            values = torch.tensor([0.0] * len(states))
-
-            
-             # We do not use values in this example
+            values = torch.tensor([0.0] * len(states))  # We do not use values in this example
             action_probs = torch.softmax(logits, dim=-1)
             dist = Categorical(action_probs)
             log_probs = dist.log_prob(torch.tensor(actions).to(self.device))
 
         return log_probs, values
-def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
+
+    
+  def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # A very simple dataset to simulate human feedback
     prompts = prompts1
@@ -104,7 +102,7 @@ def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
         attention_mask = torch.ones_like(input_ids).to(PPO.device)
 
         with torch.no_grad():
-            outputs = model.module.generate(input_ids, attention_mask=attention_mask)
+            outputs = model.generate(input_ids, attention_mask=attention_mask)
             generated_token_ids = outputs[0].tolist()
 
         # Only store actions corresponding to the target output
@@ -125,7 +123,7 @@ def evaluate(model, tokenizer, input_sentences, expected_output_sentences, devic
         input_ids = tokenizer.encode(prompt, return_tensors="pt").to(PPO.device)
 
         with torch.no_grad():
-            outputs = model.module.generate(input_ids)
+            outputs = model.generate(input_ids)
             generated_sentence = tokenizer.decode(outputs[0], skip_special_tokens=True)
             print("The generated sentence is ", generated_sentence)
 
@@ -133,6 +131,12 @@ def evaluate(model, tokenizer, input_sentences, expected_output_sentences, devic
             correct_count += 1
 
     return correct_count / total_count
+
+def setup_multi_gpu(model):
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs.")
+        model = torch.nn.DataParallel(model)
+    return model
 
 def main():
     count = 0
@@ -142,7 +146,7 @@ def main():
     # Loading the RLHF dataset
     prompts =[]
     completions = []
-    df = pd.read_excel('Juice Wrld small dataset.xlsx')
+    df = pd.read_excel('Juice Wrld dataset.xlsx')
     print(df.columns)
     prompts =df['prompt']
     completions = df['completion']
@@ -152,62 +156,44 @@ def main():
     print(type(prompts))
     print(type(completions))
 
-    base_model = "EleutherAI/gpt-neo-1.3B"
-    model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-neo-1.3B")
-
-    # Check if there are multiple GPUs
-    if torch.cuda.device_count() > 1:
-        print("Using", torch.cuda.device_count(), "GPUs")
-        model = torch.nn.DataParallel(model)
-
+    base_model = "facebook/opt-1.3b"
+    model = AutoModelForCausalLM.from_pretrained("facebook/opt-1.3b")
+    model = setup_multi_gpu(model)  # Add this line
     model.to(PPO.device)  # Move the model to the specified device
 
     # Set requires_grad=True for all parameters in the model
     for param in model.parameters():
         param.requires_grad = True
 
-    tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-1.3B")
+    tokenizer = AutoTokenizer.from_pretrained("facebook/opt-1.3b")
     tokenizer.pad_token = tokenizer.eos_token
 
-    states, actions, rewards = create_dataset(model, tokenizer, prompts, completions,PPO.device)
+    states, actions, rewards = create_dataset(model, tokenizer, prompts, completions, PPO.device)
     ppo = PPO(model, tokenizer)
 
     # Evaluation data
     input_sentences = [
-                "Now she in that Uber with a sad face",
+        "Now she in that Uber with a sad face",
         "She was all the way from the north side",
     ]
     expected_output_sentences = [
-        "Tattoos on her body, I got bad taste",
-        "One ride, just to fuck for the one time",
+                "Now she's in the back of a blacked-out ride",
+        "She told me that she love me, I was like, \"Alright\"",
     ]
 
-    # Evaluate the base model
-    base_model_score = evaluate(model, tokenizer, input_sentences, expected_output_sentences,PPO.device)
-    print(f"Base model score: {base_model_score}")
+    # Training loop
+    for i in range(100):
+        print(f"Epoch: {i + 1}")
+        ppo.update(rewards, actions, states, actions)
+        accuracy = evaluate(model, tokenizer, input_sentences, expected_output_sentences, PPO.device)
+        print(f"Accuracy: {accuracy * 100:.2f}%")
 
-    for _ in range(10):  # Train for 10 iterations
-        count = count+1
-        print("The iteration is ", count)
-        log_probs_old, values = [], []
-        for state in states:
-            action, log_prob, value = ppo.act(state)
-            log_probs_old.append(log_prob.item())
-            values.append(value.item())
+        # Save the model every 10 epochs
+        if (i + 1) % 10 == 0:
+            model.module.save_pretrained(f"model_checkpoint_epoch_{i + 1}")  # Use .module for DataParallel models
 
-        log_probs_old = torch.tensor(log_probs_old)
-        rewards = torch.tensor(rewards)
-        ppo.update(rewards, log_probs_old, states, actions)
-
-    # Evaluate the PPO-trained model
-    ppo_trained_model_score = evaluate(ppo.model, tokenizer, input_sentences, expected_output_sentences, PPO.device)
-    print(f"PPO-trained model score: {ppo_trained_model_score}")
-
-    print("Performance improvement:", ppo_trained_model_score - base_model_score)
-    
-    #Saving the Model on huggingface
-    token = "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"
-    model.push_to_hub("Amirkid/juicewrld-v1", use_auth_token=token)
+    print("Training complete!")
 
 if __name__ == "__main__":
     main()
+
