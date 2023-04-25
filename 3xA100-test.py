@@ -102,7 +102,11 @@ def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
         attention_mask = torch.ones_like(input_ids).to(PPO.device)
 
         with torch.no_grad():
-            outputs = model.generate(input_ids, attention_mask=attention_mask)
+            # Check if model is a DataParallel object and call the generate method accordingly
+            if isinstance(model, torch.nn.DataParallel):
+                outputs = model.module.generate(input_ids, attention_mask=attention_mask)
+            else:
+                outputs = model.generate(input_ids, attention_mask=attention_mask)
             generated_token_ids = outputs[0].tolist()
 
         # Only store actions corresponding to the target output
@@ -112,6 +116,7 @@ def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
             prompt += f" {tokenizer.decode([token_id])}"
 
     return states, actions, rewards
+
 
 def evaluate(model, tokenizer, input_sentences, expected_output_sentences, device):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,7 +128,11 @@ def evaluate(model, tokenizer, input_sentences, expected_output_sentences, devic
         input_ids = tokenizer.encode(prompt, return_tensors="pt").to(PPO.device)
 
         with torch.no_grad():
-            outputs = model.generate(input_ids)
+            # Check if model is a DataParallel object and call the generate method accordingly
+            if isinstance(model, torch.nn.DataParallel):
+                outputs = model.module.generate(input_ids)
+            else:
+                outputs = model.generate(input_ids)
             generated_sentence = tokenizer.decode(outputs[0], skip_special_tokens=True)
             print("The generated sentence is ", generated_sentence)
 
@@ -131,6 +140,7 @@ def evaluate(model, tokenizer, input_sentences, expected_output_sentences, devic
             correct_count += 1
 
     return correct_count / total_count
+
 
 def setup_multi_gpu(model):
     if torch.cuda.device_count() > 1:
