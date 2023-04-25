@@ -86,7 +86,7 @@ class PPO:
         return log_probs, values
 
     
-  def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
+def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # A very simple dataset to simulate human feedback
     prompts = prompts1
