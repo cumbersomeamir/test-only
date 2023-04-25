@@ -104,7 +104,7 @@ def create_dataset(model, tokenizer, prompts1, completions1, device) -> Tuple:
         attention_mask = torch.ones_like(input_ids).to(PPO.device)
 
         with torch.no_grad():
-            outputs = model.generate(input_ids, attention_mask=attention_mask)
+            outputs = model.module.generate(input_ids, attention_mask=attention_mask)
             generated_token_ids = outputs[0].tolist()
 
         # Only store actions corresponding to the target output
@@ -125,7 +125,7 @@ def evaluate(model, tokenizer, input_sentences, expected_output_sentences, devic
         input_ids = tokenizer.encode(prompt, return_tensors="pt").to(PPO.device)
 
         with torch.no_grad():
-            outputs = model.generate(input_ids)
+            outputs = model.module.generate(input_ids)
             generated_sentence = tokenizer.decode(outputs[0], skip_special_tokens=True)
             print("The generated sentence is ", generated_sentence)
 
